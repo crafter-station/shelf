@@ -726,3 +726,31 @@ canvas:focus-visible {
   }
 }
 .reader-root { position: fixed; inset: 0; }
+
+/* Sign-in affordance floating above the full-screen reader canvas. */
+.auth-overlay {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+}
+.auth-btn {
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #f4ece0;
+  background: rgba(31, 24, 18, 0.55);
+  border: 1px solid rgba(244, 236, 224, 0.25);
+  border-radius: 999px;
+  padding: 0.45rem 1.1rem;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background 150ms ease, border-color 150ms ease;
+}
+.auth-btn:hover {
+  background: rgba(31, 24, 18, 0.78);
+  border-color: rgba(244, 236, 224, 0.45);
+}

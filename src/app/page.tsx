@@ -3,6 +3,8 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 
+import { AuthOverlay } from "../components/auth-overlay";
+
 // The reader is WebGL + pdf.js (browser-only) — never render it on the server.
 const Reader = dynamic(() => import("../reader/Reader"), { ssr: false });
 
@@ -22,7 +24,9 @@ export default function Home() {
       if (!cancelled) setReady(true);
     };
     if ("fonts" in document) {
-      const loaded = Promise.allSettled(FACES.map((f) => document.fonts.load(f)));
+      const loaded = Promise.allSettled(
+        FACES.map((f) => document.fonts.load(f)),
+      );
       const timeout = new Promise((r) => setTimeout(r, 1500));
       Promise.race([loaded, timeout]).finally(reveal);
     } else {
@@ -33,5 +37,10 @@ export default function Home() {
     };
   }, []);
 
-  return ready ? <Reader /> : null;
+  return (
+    <>
+      <AuthOverlay />
+      {ready ? <Reader /> : null}
+    </>
+  );
 }
