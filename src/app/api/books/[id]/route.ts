@@ -1,3 +1,4 @@
+import { del } from "@vercel/blob";
 import { and, eq } from "drizzle-orm";
 
 import { getDb } from "../../../../db";
@@ -34,7 +35,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
 }
 
 // DELETE /api/books/:id — remove a book from the user's shelf. (Blob cleanup is
-// wired in when Blob storage lands; this removes the metadata row.)
+// removes the metadata row and the PDF bytes from Blob.)
 export async function DELETE(_req: Request, { params }: Ctx) {
   const userId = await getUserId();
   if (!userId) return errors.unauthorized();
@@ -45,7 +46,17 @@ export async function DELETE(_req: Request, { params }: Ctx) {
   const [row] = await db
     .delete(books)
     .where(and(eq(books.id, id), eq(books.userId, userId)))
-    .returning({ id: books.id });
+    .returning({ id: books.id, blobUrl: books.blobUrl });
   if (!row) return errors.notFound();
+
+  // Best-effort blob cleanup — the row is already gone, so a failed/absent
+  // delete shouldn't fail the request (e.g. the built-in book has no blob).
+  if (row.blobUrl) {
+    try {
+      await del(row.blobUrl);
+    } catch {
+      // swallow: orphaned blob is recoverable, a 500 here is not worth it.
+    }
+  }
   return new Response(null, { status: 204 });
 }
