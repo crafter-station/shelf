@@ -1,16 +1,16 @@
 import { type MutableRefObject, useEffect, useMemo, useRef } from "react";
+
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
+
 import type { CamTarget } from "../CameraRig";
+import type { LibraryBook } from "../library/store";
 import { useReducedMotion } from "../useReducedMotion";
 import { spineTexture } from "./spineTexture";
 
-export type ShelfBook = {
-  id: string;
-  title: string;
-  spineBg?: string;
-  spineInk?: string;
-};
+// The shelf only needs a book's identity + spine look; LibraryBook is that
+// superset, so the same objects flow straight through from the reader.
+export type ShelfBook = LibraryBook;
 
 const BOOK_H = 3.0;
 const BOOK_D = 2.0; // page width (depth into shelf)
@@ -50,7 +50,10 @@ function SpineBook({
   const lift = useRef(0);
 
   const materials = useMemo(() => {
-    const side = new THREE.MeshStandardMaterial({ color: book.spineBg ?? "#1f4e46", roughness: 0.7 });
+    const side = new THREE.MeshStandardMaterial({
+      color: book.spineBg ?? "#1f4e46",
+      roughness: 0.7,
+    });
     const spine = new THREE.MeshStandardMaterial({
       map: spineTexture(book.title, { bg: book.spineBg, ink: book.spineInk }),
       roughness: 0.6,
@@ -85,7 +88,11 @@ function SpineBook({
       if (Math.abs(lift.current - liftT) > 1e-3) busy = true;
     }
 
-    m.position.set(x, pull.current * 0.45 + lift.current * 0.14, pull.current * 1.8 + lift.current * 0.4);
+    m.position.set(
+      x,
+      pull.current * 0.45 + lift.current * 0.14,
+      pull.current * 1.8 + lift.current * 0.4,
+    );
     m.rotation.y = pull.current * -0.5;
     m.scale.setScalar(1 + pull.current * 0.04 + lift.current * 0.02);
 
@@ -126,7 +133,14 @@ type Props = {
   onReady: () => void;
 };
 
-export function Shelf({ books, camTarget, openingId, selectedId, onOpen, onReady }: Props) {
+export function Shelf({
+  books,
+  camTarget,
+  openingId,
+  selectedId,
+  onOpen,
+  onReady,
+}: Props) {
   const invalidate = useThree((s) => s.invalidate);
   const reduced = useReducedMotion();
 
@@ -148,7 +162,8 @@ export function Shelf({ books, camTarget, openingId, selectedId, onOpen, onReady
     } else {
       // Pull back if the row of spines is wider than the view (many books / narrow).
       const aspect = state.size.width / Math.max(1, state.size.height);
-      const fitZ = (span / 2 + 0.6) / (Math.tan((35 * Math.PI) / 180 / 2) * aspect);
+      const fitZ =
+        (span / 2 + 0.6) / (Math.tan((35 * Math.PI) / 180 / 2) * aspect);
       t.pos.set(0, 0, Math.max(SHELF_POS.z, fitZ));
       t.look.copy(SHELF_LOOK);
     }

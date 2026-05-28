@@ -14,8 +14,10 @@ function openDb(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(META)) db.createObjectStore(META, { keyPath: "id" });
-      if (!db.objectStoreNames.contains(BLOBS)) db.createObjectStore(BLOBS, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(META))
+        db.createObjectStore(META, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(BLOBS))
+        db.createObjectStore(BLOBS, { keyPath: "id" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -28,7 +30,10 @@ export async function listPdfs(): Promise<PdfMeta[]> {
   try {
     return await new Promise((resolve, reject) => {
       const req = db.transaction(META, "readonly").objectStore(META).getAll();
-      req.onsuccess = () => resolve((req.result as PdfMeta[]).sort((a, b) => a.addedAt - b.addedAt));
+      req.onsuccess = () =>
+        resolve(
+          (req.result as PdfMeta[]).sort((a, b) => a.addedAt - b.addedAt),
+        );
       req.onerror = () => reject(req.error);
     });
   } finally {
@@ -37,7 +42,10 @@ export async function listPdfs(): Promise<PdfMeta[]> {
 }
 
 /** Persist a PDF's bytes + metadata; returns the new metadata. */
-export async function addPdf(name: string, bytes: ArrayBuffer): Promise<PdfMeta> {
+export async function addPdf(
+  name: string,
+  bytes: ArrayBuffer,
+): Promise<PdfMeta> {
   const meta: PdfMeta = { id: crypto.randomUUID(), name, addedAt: Date.now() };
   const db = await openDb();
   try {
@@ -63,7 +71,10 @@ export async function getPdfBytes(id: string): Promise<ArrayBuffer | null> {
   try {
     return await new Promise((resolve, reject) => {
       const req = db.transaction(BLOBS, "readonly").objectStore(BLOBS).get(id);
-      req.onsuccess = () => resolve((req.result as { bytes: ArrayBuffer } | undefined)?.bytes ?? null);
+      req.onsuccess = () =>
+        resolve(
+          (req.result as { bytes: ArrayBuffer } | undefined)?.bytes ?? null,
+        );
       req.onerror = () => reject(req.error);
     });
   } finally {
