@@ -1,6 +1,7 @@
 import { type HandleUploadBody, handleUpload } from "@vercel/blob/client";
 
-import { getUserId } from "../../../../lib/api";
+import { getDb } from "../../../../db";
+import { assertWithinBudget, getUsage, getUserId } from "../../../../lib/api";
 
 const MAX_FILE_BYTES = 60 * 1024 * 1024; // 60 MB per PDF
 
@@ -24,13 +25,27 @@ export async function POST(request: Request): Promise<Response> {
     const result = await handleUpload({
       body,
       request,
-      onBeforeGenerateToken: async () => ({
-        allowedContentTypes: ["application/pdf"],
-        maximumSizeInBytes: MAX_FILE_BYTES,
-        // Random suffix => unguessable public URL (public-by-obscurity).
-        addRandomSuffix: true,
-        tokenPayload: JSON.stringify({ userId }),
-      }),
+      onBeforeGenerateToken: async (_pathname, clientPayload) => {
+        // Enforce the per-user budget here, before any bytes are uploaded, so a
+        // quota rejection never leaves an orphaned blob behind.
+        const db = getDb();
+        if (db) {
+          let size = 0;
+          try {
+            size =
+              (JSON.parse(clientPayload ?? "{}") as { size?: number }).size ??
+              0;
+          } catch {}
+          assertWithinBudget(await getUsage(db, userId), size);
+        }
+        return {
+          allowedContentTypes: ["application/pdf"],
+          maximumSizeInBytes: MAX_FILE_BYTES,
+          // Random suffix => unguessable public URL (public-by-obscurity).
+          addRandomSuffix: true,
+          tokenPayload: JSON.stringify({ userId }),
+        };
+      },
       // The client persists the book metadata via POST /api/books once the
       // upload resolves; this callback only fires for publicly-reachable
       // deployments, so we keep it a no-op to avoid divergent write paths.
