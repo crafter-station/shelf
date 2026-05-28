@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 // Shown once after sign-in when the user has books saved locally (anonymous):
 // offers to move them into their account so they sync across devices.
 export function MigrationPrompt({
@@ -12,6 +14,21 @@ export function MigrationPrompt({
   onDismiss: () => void;
 }) {
   const noun = count === 1 ? "book" : "books";
+  const primaryRef = useRef<HTMLButtonElement>(null);
+
+  // Move focus into the dialog and let Escape dismiss it (unless mid-move).
+  useEffect(() => {
+    primaryRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) {
+        e.stopPropagation();
+        onDismiss();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onDismiss]);
+
   return (
     <>
       <div className="migrate-scrim" aria-hidden="true" />
@@ -20,11 +37,12 @@ export function MigrationPrompt({
         role="dialog"
         aria-modal="true"
         aria-labelledby="migrate-title"
+        aria-describedby="migrate-body"
       >
         <p id="migrate-title" className="migrate__title">
           Move your shelf to your account?
         </p>
-        <p className="migrate__body">
+        <p id="migrate-body" className="migrate__body">
           You have {count} {noun} saved on this device. Move{" "}
           {count === 1 ? "it" : "them"} to your account to read{" "}
           {count === 1 ? "it" : "them"} on any device.
@@ -39,6 +57,7 @@ export function MigrationPrompt({
             Not now
           </button>
           <button
+            ref={primaryRef}
             type="button"
             className="migrate__btn migrate__btn--primary"
             onClick={onMigrate}

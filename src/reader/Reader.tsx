@@ -106,6 +106,7 @@ function ReaderInner({
   );
   const [library, setLibrary] = useState<LibraryBook[]>(() => [aliceBook]);
   const [reloadToken, setReloadToken] = useState(0);
+  const [shelfReady, setShelfReady] = useState(false);
   const sourcesById = useRef(new Map<string, PageSource>());
 
   // Rebuild the shelf from the active backend (IndexedDB or cloud). Re-runs when
@@ -114,12 +115,19 @@ function ReaderInner({
   // biome-ignore lint/correctness/useExhaustiveDependencies: reloadToken is a manual re-run trigger, not read inside.
   useEffect(() => {
     let cancelled = false;
+    setShelfReady(false);
     store
       .list()
       .then((books) => {
         if (!cancelled) setLibrary([aliceBook, ...books]);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled)
+          setError("We couldn't load your shelf. Please try again.");
+      })
+      .finally(() => {
+        if (!cancelled) setShelfReady(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -576,6 +584,14 @@ function ReaderInner({
           onMigrate={runMigration}
           onDismiss={dismissMigration}
         />
+      )}
+
+      {/* First-run nudge: only Alice on the shelf, nothing else going on. */}
+      {view === "shelf" && shelfReady && !busy && library.length === 1 && (
+        <p className="shelf-hint">
+          This is your shelf. Drop a PDF — or tap Upload — to add your own
+          books.
+        </p>
       )}
 
       {dragging && (

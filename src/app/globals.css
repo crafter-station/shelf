@@ -823,3 +823,37 @@ canvas:focus-visible {
 .migrate__btn--primary:hover:not(:disabled) {
   background: #2a655a;
 }
+
+/* First-run hint on an otherwise-empty shelf. Non-interactive so it never
+   blocks clicking a spine. */
+.shelf-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 2.2rem;
+  transform: translateX(-50%);
+  margin: 0;
+  max-width: min(90vw, 30rem);
+  text-align: center;
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.01em;
+  color: #4a3f30;
+  opacity: 0.75;
+  pointer-events: none;
+  animation: shelf-hint-in 600ms ease both;
+}
+@keyframes shelf-hint-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  to {
+    opacity: 0.75;
+    transform: translate(-50%, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shelf-hint {
+    animation: none;
+  }
+}

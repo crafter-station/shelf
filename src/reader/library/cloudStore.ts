@@ -40,7 +40,11 @@ export const cloudStore: LibraryStore = {
 
   async list() {
     const res = await fetch("/api/books");
-    if (!res.ok) return [];
+    // 401 (signed out mid-flight) and 503 (cloud not provisioned) are expected
+    // states — treat as an empty shelf. Anything else is a real failure worth
+    // surfacing to the reader.
+    if (res.status === 401 || res.status === 503) return [];
+    if (!res.ok) throw new Error("Couldn't load your shelf.");
     const rows = (await res.json()) as BookRow[];
     return rows.map(rowToBook);
   },
