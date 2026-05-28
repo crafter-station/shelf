@@ -52,6 +52,9 @@ export const cloudStore: LibraryStore = {
     const blob = await upload(file.name, file, {
       access: "public",
       handleUploadUrl: "/api/blob/upload",
+      // Let the token route check the budget against the incoming size before
+      // any bytes are uploaded.
+      clientPayload: JSON.stringify({ size: file.size }),
       onUploadProgress: onProgress
         ? (e) => onProgress(e.percentage / 100)
         : undefined,

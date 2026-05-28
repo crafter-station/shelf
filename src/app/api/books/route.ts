@@ -1,13 +1,13 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 import { getDb } from "../../../db";
 import { books } from "../../../db/schema";
 import {
+  assertWithinBudget,
   errors,
+  getUsage,
   getUserId,
   json,
-  MAX_BOOKS,
-  MAX_TOTAL_BYTES,
 } from "../../../lib/api";
 
 // GET /api/books — the signed-in user's cloud shelf, oldest first.
@@ -53,20 +53,11 @@ export async function POST(req: Request) {
   if (!title) return errors.badRequest("A title is required.");
   const size = Math.max(0, Math.floor(body.size ?? 0));
 
-  // Budget check against the user's current usage.
-  const [usage] = await db
-    .select({
-      count: sql<number>`count(*)::int`,
-      total: sql<number>`coalesce(sum(${books.size}), 0)::bigint`,
-    })
-    .from(books)
-    .where(eq(books.userId, userId));
-
-  if ((usage?.count ?? 0) >= MAX_BOOKS) {
-    return errors.overQuota(`Shelf is full (max ${MAX_BOOKS} books).`);
-  }
-  if (Number(usage?.total ?? 0) + size > MAX_TOTAL_BYTES) {
-    return errors.overQuota("This book would exceed your 100 MB of storage.");
+  // Budget backstop (the upload route already checked before creating the blob).
+  try {
+    assertWithinBudget(await getUsage(db, userId), size);
+  } catch (e) {
+    return errors.overQuota((e as Error).message);
   }
 
   const [row] = await db

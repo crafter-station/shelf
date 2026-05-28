@@ -1,8 +1,41 @@
 import { auth } from "@clerk/nextjs/server";
+import { eq, sql } from "drizzle-orm";
 
-// Per-user storage budget (also enforced at upload time once Blob lands).
+import type { Db } from "../db";
+import { books } from "../db/schema";
+
+// Per-user storage budget, enforced both at the upload token route (before the
+// blob is created) and at POST /api/books (as a backstop).
 export const MAX_BOOKS = 25;
 export const MAX_TOTAL_BYTES = 100 * 1024 * 1024; // 100 MB
+
+// A user's current shelf usage: how many books and how many bytes.
+export async function getUsage(
+  db: Db,
+  userId: string,
+): Promise<{ count: number; total: number }> {
+  const [row] = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+      total: sql<number>`coalesce(sum(${books.size}), 0)::bigint`,
+    })
+    .from(books)
+    .where(eq(books.userId, userId));
+  return { count: row?.count ?? 0, total: Number(row?.total ?? 0) };
+}
+
+// Throws a user-facing message if adding `size` bytes would breach the budget.
+export function assertWithinBudget(
+  usage: { count: number; total: number },
+  size: number,
+): void {
+  if (usage.count >= MAX_BOOKS) {
+    throw new Error(`Your shelf is full (max ${MAX_BOOKS} books).`);
+  }
+  if (usage.total + size > MAX_TOTAL_BYTES) {
+    throw new Error("This book would exceed your 100 MB of storage.");
+  }
+}
 
 // Resolve the signed-in Clerk user, or null. Returns null (rather than throwing)
 // when Clerk isn't configured, so cloud routes degrade to 401 instead of 500
