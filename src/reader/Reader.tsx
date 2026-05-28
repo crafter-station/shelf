@@ -1,21 +1,50 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Canvas } from "@react-three/fiber";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+import { useAuth } from "@clerk/nextjs";
 import { ContactShadows, Environment } from "@react-three/drei";
+import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
+
 import { Book } from "./Book";
 import { CameraRig, type CamTarget } from "./CameraRig";
-import { Shelf, type ShelfBook } from "./shelf/Shelf";
-import { addPdf, getPdfBytes, listPdfs, removePdf } from "./library/db";
-import { spineColors } from "./library/spineColors";
+import { cloudStore } from "./library/cloudStore";
+import { localStore } from "./library/localStore";
+import type { LibraryBook, LibraryStore } from "./library/store";
+import { Shelf } from "./shelf/Shelf";
 import { createAliceSource } from "./sources/aliceSource";
 import type { ChapterMark, PageSource } from "./sources/pageSource";
 import { ErrorToast } from "./ui/ErrorToast";
 import { LoadingOverlay } from "./ui/LoadingOverlay";
 import { UploadButton } from "./ui/UploadButton";
 
+// Whether sign-in (and therefore the cloud shelf) is available at all.
+const CLERK_ON = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
+// Default export picks the storage backend by auth state. The env branch is a
+// build-time constant, so the hook order below is always stable.
 export default function Reader() {
+  return CLERK_ON ? <CloudReader /> : <ReaderInner store={localStore} />;
+}
+
+function CloudReader() {
+  const { isSignedIn } = useAuth();
+  const store = useMemo<LibraryStore>(
+    () => (isSignedIn ? cloudStore : localStore),
+    [isSignedIn],
+  );
+  return <ReaderInner store={store} />;
+}
+
+function ReaderInner({ store }: { store: LibraryStore }) {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [ready, setReady] = useState(false);
@@ -32,7 +61,9 @@ export default function Reader() {
   const [dragging, setDragging] = useState(false);
 
   // Home is the shelf; opening a book pulls it out (transitioning) then reads.
-  const [view, setView] = useState<"shelf" | "transitioning" | "reading">("shelf");
+  const [view, setView] = useState<"shelf" | "transitioning" | "reading">(
+    "shelf",
+  );
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [currentBookId, setCurrentBookId] = useState<string | null>(null);
@@ -53,7 +84,7 @@ export default function Reader() {
     pos: new THREE.Vector3(0, 0, 6.5),
     look: new THREE.Vector3(0, 0, 0),
   });
-  const aliceBook = useMemo<ShelfBook>(
+  const aliceBook = useMemo<LibraryBook>(
     () => ({
       id: "alice",
       title: "Alice's Adventures in Wonderland",
@@ -62,40 +93,43 @@ export default function Reader() {
     }),
     [],
   );
-  const [library, setLibrary] = useState<ShelfBook[]>(() => [aliceBook]);
+  const [library, setLibrary] = useState<LibraryBook[]>(() => [aliceBook]);
   const sourcesById = useRef(new Map<string, PageSource>());
 
-  // Rebuild the shelf from IndexedDB on load (persisted uploads).
+  // Rebuild the shelf from the active backend (IndexedDB or cloud). Re-runs when
+  // the store changes — e.g. signing in swaps the local shelf for the cloud one.
   useEffect(() => {
-    listPdfs()
-      .then((metas) =>
-        setLibrary([
-          aliceBook,
-          ...metas.map((m) => ({ id: m.id, title: m.name, ...spineColors(m.id) })),
-        ]),
-      )
+    let cancelled = false;
+    store
+      .list()
+      .then((books) => {
+        if (!cancelled) setLibrary([aliceBook, ...books]);
+      })
       .catch(() => {});
-  }, [aliceBook]);
+    return () => {
+      cancelled = true;
+    };
+  }, [aliceBook, store]);
 
   const resolveSource = useCallback(
-    async (book: ShelfBook): Promise<PageSource> => {
+    async (book: LibraryBook): Promise<PageSource> => {
       if (book.id === "alice") return alice;
       const cached = sourcesById.current.get(book.id);
       if (cached) return cached;
       const { loadPdfDocument } = await import("./pdf/loadPdf");
       const { createPdfSource } = await import("./sources/pdfSource");
-      const bytes = await getPdfBytes(book.id);
+      const bytes = await store.getBytes(book);
       if (!bytes) throw new Error("That book is no longer in your library.");
       const doc = await loadPdfDocument(bytes);
       const src = await createPdfSource(doc, book.title);
       sourcesById.current.set(book.id, src);
       return src;
     },
-    [alice],
+    [alice, store],
   );
 
   const openBook = useCallback(
-    (book: ShelfBook) => {
+    (book: LibraryBook) => {
       if (transitioning.current || viewRef.current !== "shelf") return; // no re-entry
       transitioning.current = true;
       // Pull the book out + dissolve while its source loads, then read.
@@ -133,15 +167,16 @@ export default function Reader() {
   const removeBook = useCallback(
     (id: string) => {
       if (id === "alice") return;
-      removePdf(id).catch(() => {});
+      store.remove(id).catch(() => {});
       setLibrary((prev) => prev.filter((b) => b.id !== id));
       setSelectedId(null);
       const src = sourcesById.current.get(id);
       sourcesById.current.delete(id);
       // Never destroy the document that's currently being read.
-      if (!(viewRef.current === "reading" && currentBookId === id)) src?.dispose();
+      if (!(viewRef.current === "reading" && currentBookId === id))
+        src?.dispose();
     },
-    [currentBookId],
+    [currentBookId, store],
   );
 
   const backToShelf = useCallback(() => {
@@ -161,11 +196,14 @@ export default function Reader() {
     }, 280);
   }, []);
 
-  // Upload: validate, persist to IndexedDB, add to the shelf (does not auto-open).
+  // Upload: validate, persist via the active backend, add to the shelf (does not
+  // auto-open).
   const uploadPdf = useCallback(
     async (file: File) => {
       setError(null);
-      const { validatePdfFile, loadPdfDocument } = await import("./pdf/loadPdf");
+      const { validatePdfFile, loadPdfDocument } = await import(
+        "./pdf/loadPdf"
+      );
       const bad = validatePdfFile(file);
       if (bad) {
         setError(bad.message);
@@ -176,13 +214,19 @@ export default function Reader() {
       setBusy(true);
       try {
         const { createPdfSource } = await import("./sources/pdfSource");
-        const bytes = await file.arrayBuffer();
-        const name = file.name.replace(/\.pdf$/i, "");
-        // Store a copy first — pdf.js may transfer/detach the buffer to its worker.
-        const meta = await addPdf(name, bytes.slice(0));
-        const doc = await loadPdfDocument(bytes, setProgress);
-        sourcesById.current.set(meta.id, await createPdfSource(doc, name));
-        setLibrary((prev) => [...prev, { id: meta.id, title: name, ...spineColors(meta.id) }]);
+        // Persist via the active store (IndexedDB, or Blob + DB when signed in).
+        const book = await store.add(file, setProgress);
+        // Build the live source from the file we already hold (no re-fetch).
+        // Separate arrayBuffer() copies avoid pdf.js detaching the stored bytes.
+        const doc = await loadPdfDocument(
+          await file.arrayBuffer(),
+          setProgress,
+        );
+        sourcesById.current.set(
+          book.id,
+          await createPdfSource(doc, book.title),
+        );
+        setLibrary((prev) => [...prev, book]);
         // Show the new book on the shelf (dissolve out of reading if needed).
         if (viewRef.current === "reading") backToShelf();
       } catch (e) {
@@ -191,12 +235,13 @@ export default function Reader() {
         setBusy(false);
       }
     },
-    [backToShelf],
+    [backToShelf, store],
   );
 
   // Drop a PDF anywhere on the page to open it.
   useEffect(() => {
-    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const hasFiles = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types ?? []).includes("Files");
     const onOver = (e: DragEvent) => {
       if (!hasFiles(e)) return;
       e.preventDefault();
@@ -224,9 +269,15 @@ export default function Reader() {
     };
   }, [uploadPdf]);
 
-  const next = useCallback(() => setPage((p) => Math.min(p + 1, total)), [total]);
+  const next = useCallback(
+    () => setPage((p) => Math.min(p + 1, total)),
+    [total],
+  );
   const prev = useCallback(() => setPage((p) => Math.max(p - 1, 0)), []);
-  const turn = useCallback((dir: 1 | -1) => (dir < 0 ? prev() : next()), [prev, next]);
+  const turn = useCallback(
+    (dir: 1 | -1) => (dir < 0 ? prev() : next()),
+    [prev, next],
+  );
   const jumpTo = useCallback((p: number) => {
     setPage(p);
     setToc(false);
@@ -283,12 +334,18 @@ export default function Reader() {
         : `Reading — spread ${page} of ${total}.`;
 
   const hint =
-    page === 0 ? "Click, or press → to open" : page >= total ? "The end · ‹ to go back" : "Click, or use ← →";
+    page === 0
+      ? "Click, or press → to open"
+      : page >= total
+        ? "The end · ‹ to go back"
+        : "Click, or use ← →";
 
   return (
     <div className="reader-root">
       <h1 className="sr-only">
-        {view === "shelf" ? "Your bookshelf" : `${source.label} — an interactive 3D book`}
+        {view === "shelf"
+          ? "Your bookshelf"
+          : `${source.label} — an interactive 3D book`}
       </h1>
 
       {/* Keyboard / screen-reader access to the 3D shelf: focusing a book lifts
@@ -315,7 +372,10 @@ export default function Reader() {
         </nav>
       )}
 
-      <div className={`loader${ready ? " loader--hidden" : ""}`} aria-hidden="true" />
+      <div
+        className={`loader${ready ? " loader--hidden" : ""}`}
+        aria-hidden="true"
+      />
 
       {/* Quick dissolve that masks the shelf↔reading swap. */}
       <div className={`fade${fading ? " fade--on" : ""}`} aria-hidden="true" />
@@ -324,7 +384,11 @@ export default function Reader() {
         shadows={false}
         frameloop="demand"
         dpr={[1, 2]}
-        gl={{ antialias: true, alpha: true, toneMapping: THREE.ACESFilmicToneMapping }}
+        gl={{
+          antialias: true,
+          alpha: true,
+          toneMapping: THREE.ACESFilmicToneMapping,
+        }}
         camera={{ position: [0.5, 0.7, 6.4], fov: 35 }}
         onCreated={({ gl }) => {
           const el = gl.domElement;
@@ -336,8 +400,16 @@ export default function Reader() {
         }}
       >
         <ambientLight intensity={0.55} />
-        <directionalLight position={[3, 5, 4]} intensity={1.5} color="#fff4e2" />
-        <directionalLight position={[-4, 2, -2]} intensity={0.45} color="#dfe8ff" />
+        <directionalLight
+          position={[3, 5, 4]}
+          intensity={1.5}
+          color="#fff4e2"
+        />
+        <directionalLight
+          position={[-4, 2, -2]}
+          intensity={0.45}
+          color="#dfe8ff"
+        />
 
         <Suspense fallback={null}>
           <Environment preset="apartment" />
@@ -431,10 +503,18 @@ export default function Reader() {
 
       {toc && chapters.length > 0 && (
         <>
-          <div className="toc-scrim" onClick={() => setToc(false)} aria-hidden="true" />
+          <div
+            className="toc-scrim"
+            onClick={() => setToc(false)}
+            aria-hidden="true"
+          />
           <nav id="toc-panel" className="toc" aria-label="Table of contents">
             <p className="toc__head">Contents</p>
-            <button type="button" className="toc__item" onClick={() => jumpTo(0)}>
+            <button
+              type="button"
+              className="toc__item"
+              onClick={() => jumpTo(0)}
+            >
               <span className="toc__num">—</span>
               <span className="toc__title">Cover</span>
             </button>
