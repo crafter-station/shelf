@@ -217,7 +217,9 @@ function ReaderInner({
           if (!mounted.current) return;
           setSource(src);
           setCurrentBookId(book.id);
-          setPage(1); // land on the first open spread
+          // Resume where the reader left off (cloud books carry last_page),
+          // else land on the first open spread.
+          setPage(book.lastPage && book.lastPage > 0 ? book.lastPage : 1);
           setView("reading");
         } catch (e) {
           await minWait;
@@ -354,6 +356,29 @@ function ReaderInner({
     setPage(p);
     setToc(false);
   }, []);
+
+  // Clamp a resumed page if the book turned out to have fewer spreads.
+  const handleTotal = useCallback((t: number) => {
+    setTotal(t);
+    setPage((p) => (t > 0 && p > t ? t : p));
+  }, []);
+
+  // Persist reading progress for cloud books, debounced so flipping doesn't spam
+  // the API. Also keep the in-memory shelf entry in sync so reopening resumes.
+  useEffect(() => {
+    if (view !== "reading" || !currentBookId || currentBookId === "alice")
+      return;
+    if (!store.setProgress) return;
+    const id = currentBookId;
+    const at = page;
+    const timer = window.setTimeout(() => {
+      store.setProgress?.(id, at);
+      setLibrary((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, lastPage: at } : b)),
+      );
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [page, currentBookId, view, store]);
 
   // Safety net: reveal even if the environment map never resolves.
   useEffect(() => {
@@ -494,7 +519,7 @@ function ReaderInner({
             source={source}
             page={page}
             camTarget={camTarget}
-            onTotal={setTotal}
+            onTotal={handleTotal}
             onTurn={turn}
             onReady={() => setReady(true)}
             onChapters={setChapters}
