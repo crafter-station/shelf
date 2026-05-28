@@ -24,6 +24,7 @@ import { createAliceSource } from "./sources/aliceSource";
 import type { ChapterMark, PageSource } from "./sources/pageSource";
 import { ErrorToast } from "./ui/ErrorToast";
 import { LoadingOverlay } from "./ui/LoadingOverlay";
+import { MigrationPrompt } from "./ui/MigrationPrompt";
 import { UploadButton } from "./ui/UploadButton";
 
 // Whether sign-in (and therefore the cloud shelf) is available at all.
@@ -32,7 +33,11 @@ const CLERK_ON = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 // Default export picks the storage backend by auth state. The env branch is a
 // build-time constant, so the hook order below is always stable.
 export default function Reader() {
-  return CLERK_ON ? <CloudReader /> : <ReaderInner store={localStore} />;
+  return CLERK_ON ? (
+    <CloudReader />
+  ) : (
+    <ReaderInner store={localStore} signedIn={false} />
+  );
 }
 
 function CloudReader() {
@@ -41,10 +46,16 @@ function CloudReader() {
     () => (isSignedIn ? cloudStore : localStore),
     [isSignedIn],
   );
-  return <ReaderInner store={store} />;
+  return <ReaderInner store={store} signedIn={!!isSignedIn} />;
 }
 
-function ReaderInner({ store }: { store: LibraryStore }) {
+function ReaderInner({
+  store,
+  signedIn,
+}: {
+  store: LibraryStore;
+  signedIn: boolean;
+}) {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [ready, setReady] = useState(false);
@@ -94,10 +105,13 @@ function ReaderInner({ store }: { store: LibraryStore }) {
     [],
   );
   const [library, setLibrary] = useState<LibraryBook[]>(() => [aliceBook]);
+  const [reloadToken, setReloadToken] = useState(0);
   const sourcesById = useRef(new Map<string, PageSource>());
 
   // Rebuild the shelf from the active backend (IndexedDB or cloud). Re-runs when
-  // the store changes — e.g. signing in swaps the local shelf for the cloud one.
+  // the store changes — e.g. signing in swaps the local shelf for the cloud one
+  // — and when reloadToken is bumped (after a migration).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadToken is a manual re-run trigger, not read inside.
   useEffect(() => {
     let cancelled = false;
     store
@@ -109,7 +123,65 @@ function ReaderInner({ store }: { store: LibraryStore }) {
     return () => {
       cancelled = true;
     };
-  }, [aliceBook, store]);
+  }, [aliceBook, store, reloadToken]);
+
+  // First sign-in: if the device has locally-saved books, offer to move them
+  // into the account so they sync. Dismissing is remembered so we don't nag.
+  const [pendingMigration, setPendingMigration] = useState<
+    LibraryBook[] | null
+  >(null);
+  useEffect(() => {
+    if (!signedIn || store.kind !== "cloud") return;
+    try {
+      if (localStorage.getItem("shelf:migration-dismissed")) return;
+    } catch {}
+    let cancelled = false;
+    localStore
+      .list()
+      .then((local) => {
+        if (!cancelled && local.length > 0) setPendingMigration(local);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn, store]);
+
+  const dismissMigration = useCallback(() => {
+    setPendingMigration(null);
+    try {
+      localStorage.setItem("shelf:migration-dismissed", "1");
+    } catch {}
+  }, []);
+
+  const runMigration = useCallback(async () => {
+    const books = pendingMigration;
+    if (!books || books.length === 0) return;
+    setLoadingLabel("Moving your books");
+    setProgress(0);
+    setBusy(true);
+    try {
+      let done = 0;
+      for (const b of books) {
+        const bytes = await localStore.getBytes(b);
+        if (bytes) {
+          const file = new File([bytes], `${b.title}.pdf`, {
+            type: "application/pdf",
+          });
+          await cloudStore.add(file);
+          await localStore.remove(b.id);
+        }
+        done += 1;
+        setProgress(done / books.length);
+      }
+      setReloadToken((t) => t + 1); // re-list the (now cloud) shelf
+    } catch (e) {
+      setError((e as Error).message ?? "Couldn't move your books.");
+    } finally {
+      setBusy(false);
+      setPendingMigration(null);
+    }
+  }, [pendingMigration]);
 
   const resolveSource = useCallback(
     async (book: LibraryBook): Promise<PageSource> => {
@@ -471,6 +543,15 @@ function ReaderInner({ store }: { store: LibraryStore }) {
       {busy && <LoadingOverlay label={loadingLabel} progress={progress} />}
 
       {error && <ErrorToast message={error} onClose={() => setError(null)} />}
+
+      {pendingMigration && pendingMigration.length > 0 && (
+        <MigrationPrompt
+          count={pendingMigration.length}
+          busy={busy}
+          onMigrate={runMigration}
+          onDismiss={dismissMigration}
+        />
+      )}
 
       {dragging && (
         <div className="dropzone" aria-hidden="true">

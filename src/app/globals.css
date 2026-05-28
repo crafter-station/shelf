@@ -754,3 +754,72 @@ canvas:focus-visible {
   background: rgba(31, 24, 18, 0.78);
   border-color: rgba(244, 236, 224, 0.45);
 }
+
+/* Anonymous→account migration prompt (shown once after first sign-in). */
+.migrate-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(20, 15, 10, 0.5);
+  backdrop-filter: blur(3px);
+}
+.migrate {
+  position: fixed;
+  z-index: 61;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(92vw, 26rem);
+  padding: 1.6rem 1.6rem 1.3rem;
+  border-radius: 16px;
+  background: #f6efe3;
+  color: #2b2218;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  text-align: center;
+}
+.migrate__title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+.migrate__body {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  opacity: 0.8;
+  margin: 0 0 1.3rem;
+}
+.migrate__actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+}
+.migrate__btn {
+  font: inherit;
+  font-weight: 500;
+  font-size: 0.88rem;
+  border-radius: 999px;
+  padding: 0.5rem 1.1rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 150ms ease, background 150ms ease;
+}
+.migrate__btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.migrate__btn--ghost {
+  background: transparent;
+  border-color: rgba(43, 34, 24, 0.25);
+  color: #2b2218;
+}
+.migrate__btn--ghost:hover:not(:disabled) {
+  background: rgba(43, 34, 24, 0.06);
+}
+.migrate__btn--primary {
+  background: #1f4e46;
+  color: #f4ece0;
+}
+.migrate__btn--primary:hover:not(:disabled) {
+  background: #2a655a;
+}
