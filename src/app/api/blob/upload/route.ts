@@ -18,6 +18,14 @@ export async function POST(request: Request): Promise<Response> {
       { status: 401 },
     );
   }
+  // handleUpload reads the Blob token eagerly (before onBeforeGenerateToken), so
+  // without it configured we degrade to 503 rather than a confusing 400.
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return Response.json(
+      { error: "Cloud storage is not configured." },
+      { status: 503 },
+    );
+  }
 
   const body = (await request.json()) as HandleUploadBody;
 
@@ -28,16 +36,19 @@ export async function POST(request: Request): Promise<Response> {
       onBeforeGenerateToken: async (_pathname, clientPayload) => {
         // Enforce the per-user budget here, before any bytes are uploaded, so a
         // quota rejection never leaves an orphaned blob behind.
-        const db = getDb();
-        if (db) {
-          let size = 0;
-          try {
-            size =
-              (JSON.parse(clientPayload ?? "{}") as { size?: number }).size ??
-              0;
-          } catch {}
-          assertWithinBudget(await getUsage(db, userId), size);
+        let size = 0;
+        try {
+          size =
+            (JSON.parse(clientPayload ?? "{}") as { size?: number }).size ?? 0;
+        } catch {}
+        // A real client always sends a positive, in-range size; reject anything
+        // else before minting a token. (Bytes are still re-checked server-side
+        // from the committed blob in POST /api/books — clientPayload is hints.)
+        if (size <= 0 || size > MAX_FILE_BYTES) {
+          throw new Error("That file looks invalid.");
         }
+        const db = getDb();
+        if (db) assertWithinBudget(await getUsage(db, userId), size);
         return {
           allowedContentTypes: ["application/pdf"],
           maximumSizeInBytes: MAX_FILE_BYTES,

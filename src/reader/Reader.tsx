@@ -168,9 +168,12 @@ function ReaderInner({
     setLoadingLabel("Moving your books");
     setProgress(0);
     setBusy(true);
-    try {
-      let done = 0;
-      for (const b of books) {
+    // Move book-by-book; one failure shouldn't abort the rest. Books that fail
+    // stay local, so the next sign-in can offer them again.
+    let failed = 0;
+    for (let i = 0; i < books.length; i++) {
+      const b = books[i];
+      try {
         const bytes = await localStore.getBytes(b);
         if (bytes) {
           const file = new File([bytes], `${b.title}.pdf`, {
@@ -179,16 +182,19 @@ function ReaderInner({
           await cloudStore.add(file);
           await localStore.remove(b.id);
         }
-        done += 1;
-        setProgress(done / books.length);
+      } catch {
+        failed += 1;
       }
-      setReloadToken((t) => t + 1); // re-list the (now cloud) shelf
-    } catch (e) {
-      setError((e as Error).message ?? "Couldn't move your books.");
-    } finally {
-      setBusy(false);
-      setPendingMigration(null);
+      setProgress((i + 1) / books.length);
     }
+    setReloadToken((t) => t + 1); // re-list the (now cloud) shelf
+    if (failed > 0) {
+      setError(
+        `Moved ${books.length - failed} of ${books.length} books — you can try the rest again.`,
+      );
+    }
+    setBusy(false);
+    setPendingMigration(null);
   }, [pendingMigration]);
 
   const resolveSource = useCallback(
