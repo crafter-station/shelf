@@ -16,9 +16,13 @@ export function MigrationPrompt({
   const noun = count === 1 ? "book" : "books";
   const primaryRef = useRef<HTMLButtonElement>(null);
 
-  // Move focus into the dialog and let Escape dismiss it (unless mid-move).
+  // Move focus into the dialog once, on open.
   useEffect(() => {
     primaryRef.current?.focus();
+  }, []);
+
+  // Escape dismisses it (unless a move is in progress).
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !busy) {
         e.stopPropagation();

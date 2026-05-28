@@ -25,6 +25,10 @@ export async function getUsage(
 }
 
 // Throws a user-facing message if adding `size` bytes would breach the budget.
+// Note: this is a read-then-write check, not transactional (neon-http has no
+// interactive transactions), so two simultaneous uploads from the same user
+// could both pass and slightly exceed the cap. Acceptable for a personal shelf;
+// tighten with a Postgres constraint/trigger if it ever matters.
 export function assertWithinBudget(
   usage: { count: number; total: number },
   size: number,
@@ -42,8 +46,14 @@ export function assertWithinBudget(
 // in the anonymous-first / unprovisioned state.
 export async function getUserId(): Promise<string | null> {
   if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) return null;
-  const { userId } = await auth();
-  return userId ?? null;
+  try {
+    const { userId } = await auth();
+    return userId ?? null;
+  } catch {
+    // Misconfigured Clerk (e.g. publishable key set but secret missing) — treat
+    // as not-signed-in rather than 500ing the route.
+    return null;
+  }
 }
 
 export function json(data: unknown, status = 200) {

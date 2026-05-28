@@ -1,3 +1,4 @@
+import { head } from "@vercel/blob";
 import { desc, eq } from "drizzle-orm";
 
 import { getDb } from "../../../db";
@@ -51,7 +52,16 @@ export async function POST(req: Request) {
 
   const title = body.title?.trim();
   if (!title) return errors.badRequest("A title is required.");
-  const size = Math.max(0, Math.floor(body.size ?? 0));
+
+  // Trust the committed blob's real size for the budget, not the client's claim
+  // (clientPayload sizes are spoofable). Fall back to the reported size only if
+  // head() is unavailable.
+  let size = Math.max(0, Math.floor(body.size ?? 0));
+  if (body.blobUrl) {
+    try {
+      size = (await head(body.blobUrl)).size;
+    } catch {}
+  }
 
   // Budget backstop (the upload route already checked before creating the blob).
   try {

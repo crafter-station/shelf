@@ -21,8 +21,12 @@ export async function PATCH(req: Request, { params }: Ctx) {
   } catch {
     return errors.badRequest("Invalid JSON body.");
   }
-  if (typeof body.lastPage !== "number" || body.lastPage < 0) {
-    return errors.badRequest("lastPage must be a non-negative number.");
+  if (
+    typeof body.lastPage !== "number" ||
+    body.lastPage < 0 ||
+    body.lastPage > 100_000
+  ) {
+    return errors.badRequest("lastPage is out of range.");
   }
 
   const [row] = await db
